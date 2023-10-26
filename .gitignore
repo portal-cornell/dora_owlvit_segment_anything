@@ -1,2 +1,5 @@
 *.pth
 ./segment_anything/segment_anything.egg-info
+video_outputs_left
+*.MOV
+*__pycache__*

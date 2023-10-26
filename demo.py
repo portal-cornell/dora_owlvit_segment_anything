@@ -73,6 +73,7 @@ def load_owlvit(checkpoint_path="owlvit-large-patch14", device='cpu'):
     """
     processor = OwlViTProcessor.from_pretrained(f"google/{checkpoint_path}")
     model = OwlViTForObjectDetection.from_pretrained(f"google/{checkpoint_path}")
+    print(device)
     model.to(device)
     model.eval()
     
@@ -91,7 +92,7 @@ if __name__ == "__main__":
         "--output_dir", "-o", type=str, default="outputs", required=True, help="output directory"
     )
     parser.add_argument('--owlvit_model', help='select model', default="owlvit-base-patch32", choices=["owlvit-base-patch32", "owlvit-base-patch16", "owlvit-large-patch14"])
-    parser.add_argument("--box_threshold", type=float, default=0.0, help="box threshold")
+    parser.add_argument("--box_threshold", type=float, default=0.05, help="box threshold")
     parser.add_argument('--get_topk', help='detect topk boxes per class or not', action="store_true")
     parser.add_argument('--device', help='select device', default="cuda:0", type=str)
     args = parser.parse_args()
@@ -108,9 +109,11 @@ if __name__ == "__main__":
     # make dir
     os.makedirs(output_dir, exist_ok=True)
     # load image & texts
+    import time
+    t = time.time()
+    print(time.time()-t)
     image = Image.open(args.image_path)
     texts = [text_prompt.split(",")]
-    
     # load OWL-ViT model
     model, processor = load_owlvit(checkpoint_path=args.owlvit_model, device=args.device)
 
@@ -153,7 +156,8 @@ if __name__ == "__main__":
         "size": [size[1], size[0]], # H, W
         "labels": [text[idx] for idx in labels]
     }
-
+    print(f"OWLVIT TIME: {time.time()-t}")
+    t = time.time()
     # release the OWL-ViT
     model.cpu()
     del model
@@ -181,6 +185,7 @@ if __name__ == "__main__":
         boxes = transformed_boxes,
         multimask_output = False,
     )
+    print(f"SAM TIME: {time.time()-t}")
     plt.figure(figsize=(10, 10))
     plt.imshow(image)
     for mask in masks:
@@ -188,9 +193,9 @@ if __name__ == "__main__":
     for box in boxes:
         show_box(box.numpy(), plt.gca())
     plt.axis('off')
-    plt.savefig(f"./{output_dir}/owlvit_segment_anything_output.jpg")
+    plt.savefig(f"./{output_dir}/right_table_items_owlvit_SAM_output.jpg")
 
     # grounded results
     image_pil = Image.open(args.image_path)
     image_with_box = plot_boxes_to_image(image_pil, pred_dict)[0]
-    image_with_box.save(os.path.join(f"./{output_dir}/owlvit_box.jpg"))
+    image_with_box.save(os.path.join(f"./{output_dir}/right_table_items_owlvit_box.jpg"))
