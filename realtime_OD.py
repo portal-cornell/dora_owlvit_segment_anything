@@ -173,6 +173,7 @@ if __name__ == "__main__":
         "ketchup": tuple(np.random.randint(150, 255, size=3).tolist()),
         "tartar": tuple(np.random.randint(150, 255, size=3).tolist()),
         "blue tartar bottle": tuple(np.random.randint(150, 255, size=3).tolist()),
+        "tartar bottle": tuple(np.random.randint(150, 255, size=3).tolist()),
         "pot": tuple(np.random.randint(150, 255, size=3).tolist()),
         "black pot": tuple(np.random.randint(150, 255, size=3).tolist())
     }
@@ -288,4 +289,7 @@ if __name__ == "__main__":
     del model
     gc.collect()
     torch.cuda.empty_cache()
-    gif[0].save(os.path.join(f"./{output_dir}/{args.view}_{args.text_prompt}.gif"), save_all=True,optimize=False, append_images=gif[1:], loop=0)
+    # import pdb; pdb.set_trace()
+    newsize = (320, 180)
+    gif = [im.resize(newsize) for im in gif]
+    gif[0].save(os.path.join(f"./{output_dir}/{args.view}_{args.text_prompt}.gif"), save_all=True,optimize=True, append_images=gif[1:], loop=0)
