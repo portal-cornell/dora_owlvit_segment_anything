@@ -4,20 +4,21 @@ import copy
 
 import numpy as np
 import torch
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+
+import gc
+import time
 from PIL import Image, ImageDraw, ImageFont
 
 # OwlViT Detection
 from transformers import OwlViTProcessor, OwlViTForObjectDetection
 
-import cv2
-import numpy as np
-import matplotlib.pyplot as plt
-
+#FastSAM segmentation
 from FastSAM.fastsam import FastSAM, FastSAMPrompt 
 
-import gc
-import time
-
+# Getting mask of the object
 def show_mask(mask, ax, random_color=False):
     if random_color:
         color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
@@ -27,17 +28,19 @@ def show_mask(mask, ax, random_color=False):
     mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
     ax.imshow(mask_image)
 
-
+# Getting box coordinates
 def show_box(box, ax):
     x0, y0 = box[0], box[1]
     w, h = box[2] - box[0], box[3] - box[1]
     ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0,0,0,0), lw=2))  
 
+# Placing bounding boxes on the image
 def plot_boxes_to_image(image_pil, tgt, color_map):
     H, W = tgt["size"]
     boxes = tgt["boxes"]
     labels = tgt["labels"]
     scores = tgt["scores"]
+
     assert len(boxes) == len(labels), "boxes and labels must have same length"
 
     draw = ImageDraw.Draw(image_pil)
@@ -71,6 +74,7 @@ def plot_boxes_to_image(image_pil, tgt, color_map):
 
     return image_pil, mask
 
+# OwlVit Detection model
 def load_owlvit(checkpoint_path="owlvit-large-patch14", device='cpu'):
     """
     Return: model, processor (for text inputs)
@@ -83,65 +87,15 @@ def load_owlvit(checkpoint_path="owlvit-large-patch14", device='cpu'):
     
     return model, processor
 
-if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser("OWL-ViT Segment Aything", add_help=True)
-
-    parser.add_argument("--video_path", "-v", type=str, required=True, help="path to video file")
-    parser.add_argument("--view", type=str, required=True, help="view")
-    parser.add_argument("--text_prompt", "-t", type=str, required=True, help="text prompt")
-    parser.add_argument(
-        "--output_dir", "-o", type=str, default="outputs", required=True, help="output directory"
-    )
-    parser.add_argument('--owlvit_model', help='select model', default="owlvit-base-patch32", choices=["owlvit-base-patch32", "owlvit-base-patch16", "owlvit-large-patch14"])
-    parser.add_argument("--box_threshold", type=float, default=0.05, help="box threshold")
-    parser.add_argument('--get_topk', help='detect topk boxes per class or not', action="store_true")
-    parser.add_argument('--device', help='select device', default="cuda:0", type=str)
-    args = parser.parse_args()
-    
-
-    # cfg
-    # checkpoint_path = args.checkpoint_path  # change the path of the model
-    # image_path = args.image_path
-    
-    gif = []
-    # make dir
-    output_dir = args.output_dir
-    box_threshold = args.box_threshold
-    if args.get_topk:
-        box_threshold = 0.0
-    os.makedirs(output_dir, exist_ok=True)
-    text_prompt = args.text_prompt
-    texts = [text_prompt.split(",")]
-    # load OWL-ViT model
-    model, processor = load_owlvit(checkpoint_path=args.owlvit_model, device=args.device)
-
-    color_map = {
-        "ladle": tuple(np.random.randint(150, 255, size=3).tolist()),
-        "ketchup": tuple(np.random.randint(150, 255, size=3).tolist()),
-        "tartar": tuple(np.random.randint(150, 255, size=3).tolist()),
-        "blue tartar bottle": tuple(np.random.randint(150, 255, size=3).tolist()),
-        "tartar bottle": tuple(np.random.randint(150, 255, size=3).tolist()),
-        "pot": tuple(np.random.randint(150, 255, size=3).tolist()),
-        "black pot": tuple(np.random.randint(150, 255, size=3).tolist())
-    }
-
-    import cv2 
-
-    video = cv2.VideoCapture(args.video_path)
-    video.set(cv2.CAP_PROP_FPS, 10)
-    cnt = 0
-    model_SAM = FastSAM('./FastSAM/weights/yolov8n-seg.pt')
-    while video.isOpened():
-        frame_is_read, frame = video.read()
-        if not frame_is_read:
-            break
+def process_video_frame(frame, model, processor, texts, args, color_map, model_SAM):
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         # load image & texts
         image = Image.fromarray(frame)
         # newsize = (320, 180)
         # image = image.resize(newsize, resample=Image.BILINEAR)
         
+
         # run object detection model
         # each forward pass takes about .06s
         with torch.no_grad():
@@ -202,7 +156,7 @@ if __name__ == "__main__":
         ann = prompt_process.box_prompt(bboxes=bboxes.tolist())
         result = prompt_process.plot(
             annotations=ann,
-            output_path=f'./tmp/{cnt}.png',
+            output_path=f'./tmp/{args.cnt}.png',
             bboxes = bboxes,
             points = points,
             point_label = point_label,
@@ -210,12 +164,64 @@ if __name__ == "__main__":
             better_quality=True,
         )
 
-        cnt += 1
+        args.cnt += 1
         # grounded results
         # image_with_box = plot_boxes_to_image(image, pred_dict, color_map)[0]
         # gif.append(image_with_box)
         gif.append(Image.fromarray(cv2.cvtColor(result, cv2.COLOR_BGR2RGB)))
         # result.save(os.path.join(f"./tmp/{cnt}.png"))
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser("OWL-ViT Segment Aything", add_help=True)
+    parser.add_argument("--video_path", "-v", type=str, required=True, help="path to video file")
+    parser.add_argument("--view", type=str, required=True, help="view")
+    parser.add_argument("--text_prompt", "-t", type=str, required=True, help="text prompt")
+    parser.add_argument(
+        "--output_dir", "-o", type=str, default="outputs", required=True, help="output directory"
+    )
+    parser.add_argument('--owlvit_model', help='select model', default="owlvit-base-patch32", choices=["owlvit-base-patch32", "owlvit-base-patch16", "owlvit-large-patch14"])
+    parser.add_argument("--box_threshold", type=float, default=0.05, help="box threshold")
+    parser.add_argument('--get_topk', help='detect topk boxes per class or not', action="store_true")
+    parser.add_argument('--device', help='select device', default="cuda:0", type=str)
+    args = parser.parse_args()
+
+    # checkpoint_path = args.checkpoint_path  # change the path of the model
+    # image_path = args.image_path
+    gif = []
+    # make dir
+    output_dir = args.output_dir
+    box_threshold = args.box_threshold
+    if args.get_topk:
+        box_threshold = 0.0
+    os.makedirs(output_dir, exist_ok=True)
+    text_prompt = args.text_prompt
+    texts = [text_prompt.split(",")]
+    # load OWL-ViT model
+    model, processor = load_owlvit(checkpoint_path=args.owlvit_model, device=args.device)
+
+    color_map = {
+        "ladle": tuple(np.random.randint(150, 255, size=3).tolist()),
+        "ketchup": tuple(np.random.randint(150, 255, size=3).tolist()),
+        "tartar": tuple(np.random.randint(150, 255, size=3).tolist()),
+        "blue tartar bottle": tuple(np.random.randint(150, 255, size=3).tolist()),
+        "tartar bottle": tuple(np.random.randint(150, 255, size=3).tolist()),
+        "pot": tuple(np.random.randint(150, 255, size=3).tolist()),
+        "black pot": tuple(np.random.randint(150, 255, size=3).tolist())
+    }
+
+    # Passing in a video stream
+    video = cv2.VideoCapture(args.video_path)
+    video.set(cv2.CAP_PROP_FPS, 10)
+    cnt = 0
+    # Setting up FastSAM model
+    model_SAM = FastSAM('./FastSAM/weights/yolov8n-seg.pt')
+    while video.isOpened():
+        frame_is_read, frame = video.read()
+        if not frame_is_read:
+            break
+
+    # Cleaning up and saving the gif
     model.cpu()
     del model
     gc.collect()
