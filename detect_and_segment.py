@@ -83,65 +83,6 @@ def load_owlvit(checkpoint_path="owlvit-large-patch14", device='cpu'):
     
     return model, processor
 
-def get_bounding_box(image, args, model, processor, texts):
-    with torch.no_grad():
-        inputs = processor(text=texts, images=image, return_tensors="pt").to(args.device)
-        outputs = model(**inputs)
-    
-    # Target image sizes (height, width) to rescale box predictions [batch_size, 2]
-    target_sizes = torch.Tensor([image.size[::-1]])
-    # Convert outputs (bounding boxes and class logits) to COCO API
-    results = processor.post_process_object_detection(outputs=outputs, threshold=args.box_threshold, target_sizes=target_sizes.to(args.device))
-    scores = torch.sigmoid(outputs.logits)
-    print(outputs.logits.shape)
-    print(scores.shape)
-    topk_scores, topk_idxs = torch.topk(scores, k=1, dim=1)
-    
-    i = 0  # Retrieve predictions for the first image for the corresponding text queries
-    text = texts[i]
-    print(results[i]["labels"].shape)
-    print(topk_scores)
-    print(topk_idxs)
-    if args.get_topk:    
-        topk_idxs = topk_idxs.squeeze(1).tolist()
-        topk_boxes = results[i]['boxes'][topk_idxs]
-        topk_scores = topk_scores.view(len(text), -1)
-        topk_labels = torch.tensor(list(range(4)), device=args.device).long()
-        boxes, scores, labels = topk_boxes, topk_scores, topk_labels
-    else:
-        boxes, scores, labels = results[i]["boxes"], results[i]["scores"], results[i]["labels"]
-
-
-    # Getting the location of the bounding boxes within the video to pass into fastsam
-    for result in results:
-        boxes = result.boxes
-    bounding_box = boxes.xyxy.tolist()[0]
-    # print(bounding_box)
-
-    # Print detected objects and rescaled box coordinates
-    for box, score, label in zip(boxes, scores, labels):
-        box = [round(i, 2) for i in box.tolist()]
-        # print(f"Detected {text[label]} with confidence {round(score.item(), 3)} at location {box}")
-
-    boxes = boxes.cpu().detach().numpy()
-    normalized_boxes = copy.deepcopy(boxes)
-    
-    # # visualize pred
-    size = image.size
-    pred_dict = {
-        "boxes": normalized_boxes,
-        "size": [size[1], size[0]], # H, W
-        "labels": [text[idx] for idx in labels],
-        "scores": scores
-    }
-
-    cnt += 1
-    # grounded results
-    image_pil = Image.fromarray(frame)
-    image_with_box = plot_boxes_to_image(image_pil, pred_dict, color_map)[0]
-    return cv2.cvtColor(np.array(image_with_box), cv2.COLOR_RGB2BGR)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser("OWL-ViT Segment Aything", add_help=True)
