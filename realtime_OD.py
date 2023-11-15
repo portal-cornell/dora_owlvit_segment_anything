@@ -14,6 +14,10 @@ from segment_anything import build_sam, SamPredictor
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+# FastSAM
+from ultralytics import FastSAM
+from ultralytics.models.fastsam import FastSAMPrompt
+from ultralytics.models.fastsam import FastSAMPredictor, FastSAMPrompt, FastSAMValidator
 
 import gc
 
@@ -109,7 +113,13 @@ def get_bounding_box(image, args, model, processor, texts):
         boxes, scores, labels = topk_boxes, topk_scores, topk_labels
     else:
         boxes, scores, labels = results[i]["boxes"], results[i]["scores"], results[i]["labels"]
-    
+
+
+    # Getting the location of the bounding boxes within the video to pass into fastsam
+    for result in results:
+        boxes = result.boxes
+    bounding_box = boxes.xyxy.tolist()[0]
+    print(bounding_box)
 
     # Print detected objects and rescaled box coordinates
     for box, score, label in zip(boxes, scores, labels):
@@ -249,6 +259,56 @@ if __name__ == "__main__":
 
         # release the OWL-ViT
         
+
+        # run FastSAM
+        # predictor = FastSAMPredictor({'checkpoint':"./sam_vit_h_4b8939.pth"})
+        # image = cv2.imread(args.image_path)
+        # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # predictor.set_image(image)
+        
+        # H, W = size[1], size[0]
+
+        # for i in range(boxes.shape[0]):
+        #     boxes[i] = torch.Tensor(boxes[i])
+
+        # boxes = torch.tensor(boxes, device=predictor.device)
+
+        # transformed_boxes = predictor.transform.apply_boxes_torch(boxes, image.shape[:2])
+        
+        # masks, _, _ = predictor.predict_torch(
+        #     point_coords = None,
+        #     point_labels = None,
+        #     boxes = transformed_boxes,
+        #     multimask_output = False,
+        # )
+        # plt.figure(figsize=(10, 10))
+        # plt.imshow(image)
+        # for mask in masks:
+        #     show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
+        # for box in boxes:
+        #     show_box(box.numpy(), plt.gca())
+        # plt.axis('off')
+        # plt.savefig(f"./{output_dir}/right_table_items_owlvit_SAM_output.jpg")
+
+        #defining a inference sources
+        source = 'table_items.png'
+
+        #creating FastSAM model
+        model = FastSAM('FastSAM-s.pt')
+
+        # Run inference on an image
+        everything_results = model(source, device=args.device, retina_masks=True, imgsz=1024, conf=0.4, iou=0.9)
+
+        # Prepare a Prompt Process object
+        prompt_process = FastSAMPrompt(source, everything_results, device=args.device)
+
+        # # Everything prompt
+        # ann = prompt_process.everything_prompt()
+
+        #Bbox
+        ann = prompt_process.box_prompt(bbox=get_bounding_box)
+        prompt_process.plot(annotations=ann, output='./')
+
 
         # run segment anything (SAM)
         # predictor = SamPredictor(build_sam(checkpoint="./sam_vit_h_4b8939.pth"))
