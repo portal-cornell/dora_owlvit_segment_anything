@@ -7,15 +7,13 @@ import torch
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-
 import gc
-import time
 from PIL import Image, ImageDraw, ImageFont
 
 # OwlViT Detection
 from transformers import OwlViTProcessor, OwlViTForObjectDetection
 
-#FastSAM segmentation
+# FastSAM Segmentation
 from FastSAM.fastsam import FastSAM, FastSAMPrompt 
 
 # Getting mask of the object
@@ -40,7 +38,6 @@ def plot_boxes_to_image(image_pil, tgt, color_map):
     boxes = tgt["boxes"]
     labels = tgt["labels"]
     scores = tgt["scores"]
-
     assert len(boxes) == len(labels), "boxes and labels must have same length"
 
     draw = ImageDraw.Draw(image_pil)
@@ -74,7 +71,7 @@ def plot_boxes_to_image(image_pil, tgt, color_map):
 
     return image_pil, mask
 
-# OwlVit Detection model
+# OwlVit Detection Model
 def load_owlvit(checkpoint_path="owlvit-large-patch14", device='cpu'):
     """
     Return: model, processor (for text inputs)
@@ -84,18 +81,70 @@ def load_owlvit(checkpoint_path="owlvit-large-patch14", device='cpu'):
     print(device)
     model.to(device)
     model.eval()
-    
+
     return model, processor
 
+# Getting the bounding boxes around the object
+def get_bounding_box(image, args, model, processor, texts):
+    with torch.no_grad():
+        inputs = processor(text=texts, images=image, return_tensors="pt").to(args.device)
+        outputs = model(**inputs)
 
-def process_video_frame(frame, model, processor, texts, args, color_map, model_SAM):
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        # load image & texts
-        image = Image.fromarray(frame)
-        # newsize = (320, 180)
-        # image = image.resize(newsize, resample=Image.BILINEAR)
-        
+    # Target image sizes (height, width) to rescale box predictions [batch_size, 2]
+    target_sizes = torch.Tensor([image.size[::-1]])
+    # Convert outputs (bounding boxes and class logits) to COCO API
+    results = processor.post_process_object_detection(outputs=outputs, threshold=args.box_threshold, target_sizes=target_sizes.to(args.device))
+    scores = torch.sigmoid(outputs.logits)
+    print(outputs.logits.shape)
+    print(scores.shape)
+    topk_scores, topk_idxs = torch.topk(scores, k=1, dim=1)
 
+    i = 0  # Retrieve predictions for the first image for the corresponding text queries
+    text = texts[i]
+    print(results[i]["labels"].shape)
+    print(topk_scores)
+    print(topk_idxs)
+    if args.get_topk:    
+        topk_idxs = topk_idxs.squeeze(1).tolist()
+        topk_boxes = results[i]['boxes'][topk_idxs]
+        topk_scores = topk_scores.view(len(text), -1)
+        topk_labels = torch.tensor(list(range(4)), device=args.device).long()
+        boxes, scores, labels = topk_boxes, topk_scores, topk_labels
+    else:
+        boxes, scores, labels = results[i]["boxes"], results[i]["scores"], results[i]["labels"]
+
+
+    # Getting the location of the bounding boxes within the video to pass into fastsam
+    for result in results:
+        boxes = result.boxes
+    bounding_box = boxes.xyxy.tolist()[0]
+    # print(bounding_box)
+
+    # Print detected objects and rescaled box coordinates
+    for box, score, label in zip(boxes, scores, labels):
+        box = [round(i, 2) for i in box.tolist()]
+        # print(f"Detected {text[label]} with confidence {round(score.item(), 3)} at location {box}")
+
+    boxes = boxes.cpu().detach().numpy()
+    normalized_boxes = copy.deepcopy(boxes)
+
+    # # visualize pred
+    size = image.size
+    pred_dict = {
+        "boxes": normalized_boxes,
+        "size": [size[1], size[0]], # H, W
+        "labels": [text[idx] for idx in labels],
+        "scores": scores
+    }
+
+    cnt += 1
+    # grounded results
+    image_pil = Image.fromarray(frame)
+    image_with_box = plot_boxes_to_image(image_pil, pred_dict, color_map)[0]
+    return cv2.cvtColor(np.array(image_with_box), cv2.COLOR_RGB2BGR)
+
+# Processing the video frames and running the model
+def process_video_frame(model, processor, texts, image, args, color_map, model_SAM):
         # run object detection model
         # each forward pass takes about .06s
         with torch.no_grad():
@@ -108,7 +157,7 @@ def process_video_frame(frame, model, processor, texts, args, color_map, model_S
         results = processor.post_process_object_detection(outputs=outputs, threshold=box_threshold, target_sizes=target_sizes.to(args.device))
         scores = torch.sigmoid(outputs.logits)
         topk_scores, topk_idxs = torch.topk(scores, k=1, dim=1)
-        
+
         i = 0  # Retrieve predictions for the first image for the corresponding text queries
         text = texts[i]
         if args.get_topk:    
@@ -119,7 +168,7 @@ def process_video_frame(frame, model, processor, texts, args, color_map, model_S
             boxes, scores, labels = topk_boxes, topk_scores, topk_labels
         else:
             boxes, scores, labels = results[i]["boxes"], results[i]["scores"], results[i]["labels"]
-        
+
 
         # Print detected objects and rescaled box coordinates
         for box, score, label in zip(boxes, scores, labels):
@@ -128,7 +177,7 @@ def process_video_frame(frame, model, processor, texts, args, color_map, model_S
 
         boxes = boxes.cpu().detach().numpy()
         normalized_boxes = copy.deepcopy(boxes)
-        
+
         # # visualize pred
         size = image.size
         pred_dict = {
@@ -156,7 +205,7 @@ def process_video_frame(frame, model, processor, texts, args, color_map, model_S
         ann = prompt_process.box_prompt(bboxes=bboxes.tolist())
         result = prompt_process.plot(
             annotations=ann,
-            output_path=f'./tmp/{args.cnt}.png',
+            output_path=f'unused',
             bboxes = bboxes,
             points = points,
             point_label = point_label,
@@ -164,16 +213,17 @@ def process_video_frame(frame, model, processor, texts, args, color_map, model_S
             better_quality=True,
         )
 
-        args.cnt += 1
         # grounded results
         # image_with_box = plot_boxes_to_image(image, pred_dict, color_map)[0]
         # gif.append(image_with_box)
-        gif.append(Image.fromarray(cv2.cvtColor(result, cv2.COLOR_BGR2RGB)))
+        return Image.fromarray(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
         # result.save(os.path.join(f"./tmp/{cnt}.png"))
 
 
 if __name__ == "__main__":
+
     parser = argparse.ArgumentParser("OWL-ViT Segment Aything", add_help=True)
+
     parser.add_argument("--video_path", "-v", type=str, required=True, help="path to video file")
     parser.add_argument("--view", type=str, required=True, help="view")
     parser.add_argument("--text_prompt", "-t", type=str, required=True, help="text prompt")
@@ -186,8 +236,11 @@ if __name__ == "__main__":
     parser.add_argument('--device', help='select device', default="cuda:0", type=str)
     args = parser.parse_args()
 
+
+    # cfg
     # checkpoint_path = args.checkpoint_path  # change the path of the model
     # image_path = args.image_path
+
     gif = []
     # make dir
     output_dir = args.output_dir
@@ -210,18 +263,22 @@ if __name__ == "__main__":
         "black pot": tuple(np.random.randint(150, 255, size=3).tolist())
     }
 
-    # Passing in a video stream
     video = cv2.VideoCapture(args.video_path)
     video.set(cv2.CAP_PROP_FPS, 10)
     cnt = 0
-    # Setting up FastSAM model
     model_SAM = FastSAM('./FastSAM/weights/yolov8n-seg.pt')
     while video.isOpened():
         frame_is_read, frame = video.read()
         if not frame_is_read:
             break
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # load image & texts
+        image = Image.fromarray(frame)
+        # newsize = (320, 180)
+        # image = image.resize(newsize, resample=Image.BILINEAR)
+        result = process_video_frame(model, processor, texts, image, args, color_map, model_SAM)
+        gif.append(result)
 
-    # Cleaning up and saving the gif
     model.cpu()
     del model
     gc.collect()
@@ -229,3 +286,6 @@ if __name__ == "__main__":
     newsize = (320, 180)
     gif = [im.resize(newsize, resample=Image.BILINEAR) for im in gif]
     gif[0].save(os.path.join(f"./{output_dir}/{args.view}_{args.text_prompt}.gif"), save_all=True,optimize=True, append_images=gif[1:], loop=0)
+
+
+    
