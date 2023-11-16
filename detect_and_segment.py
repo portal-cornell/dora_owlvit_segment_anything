@@ -145,79 +145,81 @@ def get_bounding_box(image, args, model, processor, texts):
 
 # Processing the video frames and running the model
 def process_video_frame(model, processor, texts, image, args, color_map, model_SAM):
-        # run object detection model
-        # each forward pass takes about .06s
-        with torch.no_grad():
-            inputs = processor(text=texts, images=image, return_tensors="pt").to(args.device)
-            outputs = model(**inputs)
+    # run object detection model
+    # each forward pass takes about .06s
+    with torch.no_grad():
+        inputs = processor(text=texts, images=image, return_tensors="pt").to(args.device)
+        outputs = model(**inputs)
 
-        # Target image sizes (height, width) to rescale box predictions [batch_size, 2]
-        target_sizes = torch.Tensor([image.size[::-1]])
-        # Convert outputs (bounding boxes and class logits) to COCO API
-        results = processor.post_process_object_detection(outputs=outputs, threshold=box_threshold, target_sizes=target_sizes.to(args.device))
-        scores = torch.sigmoid(outputs.logits)
-        topk_scores, topk_idxs = torch.topk(scores, k=1, dim=1)
+    # Target image sizes (height, width) to rescale box predictions [batch_size, 2]
+    target_sizes = torch.Tensor([image.size[::-1]])
+    # Convert outputs (bounding boxes and class logits) to COCO API
+    if args.get_topk:
+        args.box_threshold = 0.0
+    results = processor.post_process_object_detection(outputs=outputs, threshold=args.box_threshold, target_sizes=target_sizes.to(args.device))
+    scores = torch.sigmoid(outputs.logits)
+    topk_scores, topk_idxs = torch.topk(scores, k=1, dim=1)
 
-        i = 0  # Retrieve predictions for the first image for the corresponding text queries
-        text = texts[i]
-        if args.get_topk:    
-            topk_idxs = topk_idxs.squeeze(1).tolist()
-            topk_boxes = results[i]['boxes'][topk_idxs]
-            topk_scores = topk_scores.view(len(text), -1)
-            topk_labels = torch.tensor(list(range(4)), device=args.device).long()
-            boxes, scores, labels = topk_boxes, topk_scores, topk_labels
-        else:
-            boxes, scores, labels = results[i]["boxes"], results[i]["scores"], results[i]["labels"]
+    i = 0  # Retrieve predictions for the first image for the corresponding text queries
+    text = texts[i]
+    if args.get_topk:    
+        topk_idxs = topk_idxs.squeeze(1).tolist()
+        topk_boxes = results[i]['boxes'][topk_idxs]
+        topk_scores = topk_scores.view(len(text), -1)
+        topk_labels = torch.tensor(list(range(len(text))), device=args.device).long()
+        boxes, scores, labels = topk_boxes, topk_scores, topk_labels
+    else:
+        boxes, scores, labels = results[i]["boxes"], results[i]["scores"], results[i]["labels"]
 
 
-        # Print detected objects and rescaled box coordinates
-        for box, score, label in zip(boxes, scores, labels):
-            box = [round(i, 2) for i in box.tolist()]
-            # print(f"Detected {text[label]} with confidence {round(score.item(), 3)} at location {box}")
+    # Print detected objects and rescaled box coordinates
+    for box, score, label in zip(boxes, scores, labels):
+        box = [round(i, 2) for i in box.tolist()]
+        # print(f"Detected {text[label]} with confidence {round(score.item(), 3)} at location {box}")
 
-        boxes = boxes.cpu().detach().numpy()
-        normalized_boxes = copy.deepcopy(boxes)
+    boxes = boxes.cpu().detach().numpy()
+    normalized_boxes = copy.deepcopy(boxes)
 
-        # # visualize pred
-        size = image.size
-        pred_dict = {
-            "boxes": normalized_boxes,
-            "size": [size[1], size[0]], # H, W
-            "labels": [text[idx] for idx in labels],
-            "scores": scores
-        }
+    # # visualize pred
+    size = image.size
+    pred_dict = {
+        "boxes": normalized_boxes,
+        "size": [size[1], size[0]], # H, W
+        "labels": [text[idx] for idx in labels],
+        "scores": scores
+    }
 
-        input = image
-        # each forward pass takes about .1s
-        everything_results = model_SAM(
-            input,
-            device=args.device,
-            retina_masks=True,
-            imgsz=1024,
-            conf=.4,
-            iou=.9   
-            )
-        bboxes = boxes
-        points = None
-        point_label = None
-        image_with_box = plot_boxes_to_image(image, pred_dict, color_map)[0]
-        prompt_process = FastSAMPrompt(image_with_box, everything_results, device=args.device)
-        ann = prompt_process.box_prompt(bboxes=bboxes.tolist())
-        result = prompt_process.plot(
-            annotations=ann,
-            output_path=f'unused',
-            bboxes = bboxes,
-            points = points,
-            point_label = point_label,
-            withContours=False,
-            better_quality=True,
+    input = image
+    # each forward pass takes about .1s
+    everything_results = model_SAM(
+        input,
+        device=args.device,
+        retina_masks=True,
+        imgsz=1024,
+        conf=.4,
+        iou=.9   
         )
+    bboxes = boxes
+    points = None
+    point_label = None
+    image_with_box = plot_boxes_to_image(image, pred_dict, color_map)[0]
+    prompt_process = FastSAMPrompt(image_with_box, everything_results, device=args.device)
+    ann = prompt_process.box_prompt(bboxes=bboxes.tolist())
+    result = prompt_process.plot(
+        annotations=ann,
+        output_path=f'unused',
+        bboxes = bboxes,
+        points = points,
+        point_label = point_label,
+        withContours=False,
+        better_quality=True,
+    )
 
-        # grounded results
-        # image_with_box = plot_boxes_to_image(image, pred_dict, color_map)[0]
-        # gif.append(image_with_box)
-        return Image.fromarray(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
-        # result.save(os.path.join(f"./tmp/{cnt}.png"))
+    # grounded results
+    # image_with_box = plot_boxes_to_image(image, pred_dict, color_map)[0]
+    # gif.append(image_with_box)
+    return Image.fromarray(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
+    # result.save(os.path.join(f"./tmp/{cnt}.png"))
 
 
 if __name__ == "__main__":
