@@ -7,6 +7,7 @@ from PIL import Image
 import argparse
 
 from realtime_OD import load_owlvit, get_bounding_box
+from detect_and_segment import process_video_frame
 
 parser = argparse.ArgumentParser("OWL-ViT Segment Anything", add_help=True)
 

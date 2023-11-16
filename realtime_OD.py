@@ -300,7 +300,7 @@ if __name__ == "__main__":
         everything_results = model(source, device=args.device, retina_masks=True, imgsz=1024, conf=0.4, iou=0.9)
 
         # Prepare a Prompt Process object
-        prompt_process = FastSAMPrompt(source, everything_results, device=args.device)
+        prompt_process = FastSAMPrompt(source, everything_results, device=args.device )
 
         # # Everything prompt
         # ann = prompt_process.everything_prompt()
