@@ -3,3 +3,4 @@
 video_outputs_left
 *.MOV
 *__pycache__*
+*.DS_Store
