@@ -14,7 +14,10 @@ from PIL import Image, ImageDraw, ImageFont
 from transformers import OwlViTProcessor, OwlViTForObjectDetection
 
 # FastSAM Segmentation
-from FastSAM.fastsam import FastSAM, FastSAMPrompt 
+from FastSAM.fastsam import FastSAM, FastSAMPrompt
+
+# Realsense for point cloud
+import pyrealsense2 as rs
 
 # Getting mask of the object
 def show_mask(mask, ax, random_color=False):
@@ -195,7 +198,7 @@ def process_video_frame(model, processor, texts, image, args, color_map, model_S
         input,
         device=args.device,
         retina_masks=True,
-        imgsz=1024,
+        imgsz=300,
         conf=.4,
         iou=.9   
         )
@@ -212,7 +215,7 @@ def process_video_frame(model, processor, texts, image, args, color_map, model_S
         points = points,
         point_label = point_label,
         withContours=False,
-        better_quality=True,
+        better_quality=False,
     )
 
     # grounded results
@@ -221,6 +224,36 @@ def process_video_frame(model, processor, texts, image, args, color_map, model_S
     return Image.fromarray(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
     # result.save(os.path.join(f"./tmp/{cnt}.png"))
 
+# def get_depth_frame():
+#     # Initialize RealSense pipeline
+#     pipeline = rs.pipeline()
+#     config = rs.config()
+#     config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+
+#     # Start streaming
+#     pipeline.start(config)
+
+#     # Wait for a coherent pair of frames: depth and color
+#     frames = pipeline.wait_for_frames()
+#     depth_frame = frames.get_depth_frame()
+
+#     # Stop streaming
+#     pipeline.stop()
+#     return depth_frame
+
+# def get_3d_coordinates(depth_frame, color_frame, bounding_box):
+#     # Create a RealSense point cloud
+#     pc = rs.pointcloud()
+#     points = pc.calculate(depth_frame)
+#     pc.map_to(color_frame)
+#     # Access the point cloud data
+#     points_data = points.get_vertices()
+#     # Get 3D coordinates from the bounding box
+#     x_center = int((bounding_box[0] + bounding_box[2]) / 2)
+#     y_center = int((bounding_box[1] + bounding_box[3]) / 2)
+#     # Access the 3D coordinates at the center of the bounding box
+#     depth_point = points_data[y_center * depth_frame.width + x_center]
+    return depth_point
 
 if __name__ == "__main__":
 
@@ -266,7 +299,8 @@ if __name__ == "__main__":
     }
 
     video = cv2.VideoCapture(args.video_path)
-    video.set(cv2.CAP_PROP_FPS, 10)
+    # Running the video at 10 fps
+    video.set(cv2.CAP_PROP_FPS, 8)
     cnt = 0
     model_SAM = FastSAM('./FastSAM/weights/yolov8n-seg.pt')
     while video.isOpened():
@@ -278,16 +312,24 @@ if __name__ == "__main__":
         image = Image.fromarray(frame)
         # newsize = (320, 180)
         # image = image.resize(newsize, resample=Image.BILINEAR)
+
+
+        # depth_frame = get_depth_frame()
         result = process_video_frame(model, processor, texts, image, args, color_map, model_SAM)
-        gif.append(result)
+        # boxes, labels = get_bounding_box(result)
+        # for box, label in zip(boxes, labels):
+        #     depth_point = get_3d_coordinates (depth_frame, frame, box)
+        #     print(f"Object:{[label]}, 3D Coordinates: {depth_point}")
+        gif.append(result)  
 
     model.cpu()
     del model
     gc.collect()
     torch.cuda.empty_cache()
     newsize = (320, 180)
+    frame_rate = 125
+    durations = [frame_rate]*len(gif)
+    print(len(gif))
     gif = [im.resize(newsize, resample=Image.BILINEAR) for im in gif]
-    gif[0].save(os.path.join(f"./{output_dir}/{args.view}_{args.text_prompt}.gif"), save_all=True,optimize=True, append_images=gif[1:], loop=0)
+    gif[0].save(os.path.join(f"./{output_dir}/{args.view}_{args.text_prompt}.gif"), save_all=True,optimize=True, append_images=gif[1:], loop=0, duration = durations/3)
 
-
-    

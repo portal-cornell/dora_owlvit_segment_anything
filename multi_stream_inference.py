@@ -10,11 +10,13 @@ from detect_and_segment import load_owlvit, process_video_frame
 
 from FastSAM.fastsam import FastSAM 
 
+import time
+
 parser = argparse.ArgumentParser("OWL-ViT Segment Anything", add_help=True)
 
 # parser.add_argument("--video_path", "-v", type=str, required=True, help="path to video file")
 # parser.add_argument("--view", type=str, required=True, help="view")
-parser.add_argument("--text_prompt", "-t", type=str, required=True, help="text prompt")
+parser.add_argument("--text_prompt", "-t", type=str, default="blue tartar bottle", help="text prompt")
 parser.add_argument(
     "--output_dir", "-o", type=str, default="outputs", help="output directory"
 )
@@ -25,9 +27,11 @@ parser.add_argument('--device', help='select device', default="cuda:0", type=str
 args = parser.parse_args()
 
 output_dir = args.output_dir
-box_threshold = args.box_threshold
-if args.get_topk:
-    box_threshold = 0.0
+# box_threshold = args.box_threshold
+# if args.get_topk:
+#     box_threshold = 0.0
+args.box_threshold = 0.0
+args.get_topk = True
 text_prompt = args.text_prompt
 texts = [text_prompt.split(",")]
 # load OWL-ViT model
@@ -55,16 +59,16 @@ print(devices[1])
 FPS = 30
 pipeline_1 = rs.pipeline()
 config_1 = rs.config()
-config_1.enable_device('244622072611')
+config_1.enable_device('244222077007')
 config_1.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, FPS)
 config_1.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, FPS)
 # ...from Camera 2
 pipeline_2 = rs.pipeline()
 config_2 = rs.config()
-config_2.enable_device('244222077007')
+config_2.enable_device('244622072611')
 config_2.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, FPS)
 config_2.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, FPS)
-
+# 244622072611
 # Start streaming from both cameras
 pipeline_1.start(config_1)
 pipeline_2.start(config_2)
@@ -97,11 +101,15 @@ try:
         color_image_2 = np.asanyarray(color_frame_2.get_data())
         # Apply colormap on depth image (image must be converted to 8-bit per pixel first)
         depth_colormap_2 = cv2.applyColorMap(cv2.convertScaleAbs(depth_image_2, alpha=0.03), cv2.COLORMAP_JET)
-
+    
+        
         converted_img = cv2.cvtColor(cv2.flip(cv2.flip(color_image_2, 0), 1), cv2.COLOR_BGR2RGB) 
         pil_image = Image.fromarray(converted_img) 
+        t = time.time()
         result = process_video_frame(model, processor, texts, pil_image, args, color_map, model_SAM)
+        print(time.time()-t)
         result = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
+
         # color_image_1 = get_bounding_box(pil_image, args, model, processor, texts)
         # Stack all images horizontally
         flipped_images = [cv2.flip(image, 0) for image in [color_image_1, depth_colormap_1,color_image_2, depth_colormap_2]]
